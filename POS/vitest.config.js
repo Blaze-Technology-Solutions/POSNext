@@ -17,6 +17,7 @@ export default defineConfig({
 			"@tauri-apps/plugin-process": path.resolve(__dirname, "./tests/stubs/tauri-process.js"),
 			"@tauri-apps/api/path": path.resolve(__dirname, "./tests/stubs/tauri-path.js"),
 			"@tauri-apps/api/core": path.resolve(__dirname, "./tests/stubs/tauri-core.js"),
+			"@tauri-apps/plugin-log": path.resolve(__dirname, "./tests/stubs/tauri-log.js"),
 		},
 	},
 	define: {

@@ -18,6 +18,7 @@
 		"updater:default",
 		"store:default",
 		"stronghold:default",
+		"log:default",
 		{
 			"identifier": "http:default",
 			"allow": [

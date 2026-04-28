@@ -11,7 +11,10 @@
  * for code that needs raw fetch semantics (e.g. the login flow).
  */
 
+import { logger } from "./logger"
 import { apiUrl, getAuthHeader, runtimeConfig } from "./runtimeConfig"
+
+const log = logger.create("DesktopHTTP")
 
 let _fetchImpl = null
 
@@ -137,6 +140,17 @@ export async function desktopFrappeRequest(options = {}) {
 		error.status = response.status
 		error.response = response
 		error.payload = payload
+		// Mirror to file log so we can see what URL/status came back when a
+		// cashier reports a failure days later.
+		log.error("API request failed", {
+			method: upperMethod,
+			url: apiUrl(target),
+			status: response.status,
+			body:
+				typeof payload === "string"
+					? payload.slice(0, 500)
+					: JSON.stringify(payload || {}).slice(0, 500),
+		})
 		if (typeof onError === "function") {
 			try {
 				onError(error)
