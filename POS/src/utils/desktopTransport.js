@@ -72,6 +72,25 @@ function encodeBody(body, headers) {
 }
 
 /**
+ * frappe-ui's createResource({ url: "..." }) accepts URLs in three shapes:
+ *   1. Absolute URL                              → use as-is
+ *   2. Path that starts with /api/...            → use as-is
+ *   3. Short-form Frappe method (dotted path)    → prepend /api/method/
+ *
+ * The original frappeRequest from frappe-ui handles (3) automatically. Our
+ * desktopFrappeRequest replacement must do the same or every short-form
+ * call (frappe.auth.get_logged_user, pos_next.api.invoices.foo, etc.) lands
+ * at a non-existent URL on Frappe Cloud and returns 404.
+ */
+function normalizeFrappePath(url) {
+	if (!url) return url
+	if (/^https?:\/\//i.test(url)) return url
+	if (url.startsWith("/api/")) return url
+	if (url.startsWith("/")) return url
+	return `/api/method/${url}`
+}
+
+/**
  * `frappe-ui`-shaped resource fetcher. Accepts a single options object the way
  * `frappeRequest` does and returns the unwrapped `message` payload (or throws).
  */
@@ -92,7 +111,7 @@ export async function desktopFrappeRequest(options = {}) {
 	const upperMethod = String(method).toUpperCase()
 	const headers = buildHeaders(extraHeaders)
 
-	let target = url
+	let target = normalizeFrappePath(url)
 	if (params && typeof params === "object" && upperMethod === "GET") {
 		const usp = new URLSearchParams()
 		for (const [k, v] of Object.entries(params)) {
