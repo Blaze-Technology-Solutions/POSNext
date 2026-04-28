@@ -33,10 +33,17 @@ async fn frappe_login(
 
 	let base = base_url.trim_end_matches('/');
 
+	let login_body = serde_json::to_string(&serde_json::json!({
+		"usr": &email,
+		"pwd": &password,
+	}))
+	.map_err(|e| format!("login body serialize failed: {e}"))?;
+
 	let login_res = client
 		.post(format!("{base}/api/method/login"))
 		.header("Accept", "application/json")
-		.json(&serde_json::json!({ "usr": &email, "pwd": &password }))
+		.header("Content-Type", "application/json")
+		.body(login_body)
 		.send()
 		.await
 		.map_err(|e| format!("login request failed: {e}"))?;
@@ -64,10 +71,12 @@ async fn frappe_login(
 		return Err(format!("generate_keys failed ({status}): {body}"));
 	}
 
-	let keys_payload: serde_json::Value = keys_res
-		.json()
+	let keys_text = keys_res
+		.text()
 		.await
-		.map_err(|e| format!("generate_keys parse failed: {e}"))?;
+		.map_err(|e| format!("generate_keys read failed: {e}"))?;
+	let keys_payload: serde_json::Value = serde_json::from_str(&keys_text)
+		.map_err(|e| format!("generate_keys parse failed: {e} (body: {keys_text})"))?;
 
 	let message = keys_payload
 		.get("message")
