@@ -57,7 +57,12 @@ if (runtimeConfig.hasServiceWorker && "serviceWorker" in navigator) {
 	window.addEventListener(
 		"load",
 		() => {
-			import("virtual:pwa-register").then(({ registerSW }) => {
+			// /* @vite-ignore */ tells Vite/Rollup not to statically resolve
+			// this. The virtual module is only provided by VitePWA, which is
+			// disabled in desktop builds — the outer runtime guard above
+			// (runtimeConfig.hasServiceWorker) ensures we never actually call
+			// import() in desktop mode, so leaving it dynamic is safe.
+			import(/* @vite-ignore */ "virtual:pwa-register").then(({ registerSW }) => {
 				registerSW({
 					immediate: true,
 					onNeedRefresh: () => log.info("New content available, reloading..."),
