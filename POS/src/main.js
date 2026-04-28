@@ -188,7 +188,8 @@ async function initializeApp() {
 			try {
 				if (!userResource.loading) userResource.fetch()
 				await userResource.promise
-				user = sessionUser()
+				// No `user_id` cookie in desktop mode — read from the resource payload.
+				user = userResource.data || null
 			} catch (error) {
 				log.debug(
 					"Desktop user fetch failed (likely invalid creds)",

@@ -168,10 +168,14 @@ async function submit() {
 				authHeader: getAuthHeader(),
 			})
 
-			// Hydrate the user resource so the existing logged-in watcher fires
+			// Hydrate the user resource so the existing logged-in watcher fires.
+			// In desktop mode there's no `user_id` cookie (login runs in Rust against
+			// a remote origin and we authenticate with API key/secret, not session
+			// cookies), so we read the user identity from the resource payload
+			// instead of `sessionUser()`.
 			if (!userResource.loading) userResource.fetch()
 			await userResource.promise
-			session.user = sessionUser()
+			session.user = userResource.data || email
 			log.info("Desktop login complete", { user: session.user })
 		} catch (error) {
 			log.error("Desktop login failed", error)
