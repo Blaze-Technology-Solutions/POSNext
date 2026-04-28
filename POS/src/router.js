@@ -2,6 +2,7 @@ import { shiftState } from "@/composables/useShift"
 import { userResource } from "@/data/user"
 import { createRouter, createWebHistory } from "vue-router"
 import { session } from "./data/session"
+import { runtimeConfig } from "./utils/runtimeConfig"
 
 const routes = [
 	{
@@ -22,7 +23,9 @@ const routes = [
 ]
 
 const router = createRouter({
-	history: createWebHistory("/pos"),
+	// Web builds are served by Frappe under `/pos`. Desktop builds (Tauri)
+	// ship as a standalone bundle, so we mount at `/`.
+	history: createWebHistory(runtimeConfig.isDesktop ? "/" : "/pos"),
 	routes,
 })
 

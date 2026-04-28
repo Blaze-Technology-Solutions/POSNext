@@ -109,8 +109,11 @@ import { ensureCSRFToken } from "../utils/csrf"
 import { offlineWorker } from "../utils/offline/workerClient"
 import { logger } from "@/utils/logger"
 import { runtimeConfig, getAuthHeader } from "@/utils/runtimeConfig"
-import { loginAndGenerateKeys, persistApiCredentials } from "@/utils/desktopAuth"
-import { userResource } from "../data/user"
+import {
+	loginAndGenerateKeys,
+	persistApiCredentials,
+} from "@/utils/desktopAuth"
+import { userResource, userData } from "../data/user"
 import { sessionUser } from "../data/session"
 
 const log = logger.create("Login")
@@ -169,13 +172,25 @@ async function submit() {
 			})
 
 			// Hydrate the user resource so the existing logged-in watcher fires.
-			// In desktop mode there's no `user_id` cookie (login runs in Rust against
-			// a remote origin and we authenticate with API key/secret, not session
-			// cookies), so we read the user identity from the resource payload
-			// instead of `sessionUser()`.
-			if (!userResource.loading) userResource.fetch()
-			await userResource.promise
+			// In desktop mode there's no `user_id` cookie (login runs in Rust
+			// against a remote origin and we auth with API key/secret, not
+			// cookies), so we derive the user identity from the resource
+			// payload — falling back to the form email if the network round
+			// trip hiccups, since the credentials we just persisted are
+			// themselves proof of login.
+			try {
+				if (!userResource.loading) userResource.fetch()
+				await userResource.promise
+			} catch (error) {
+				log.debug(
+					"Post-login user fetch failed; falling back to form email",
+					error?.message || error,
+				)
+			}
 			session.user = userResource.data || email
+			// Populate userData so the header avatar and the session-lock
+			// password-hash ownership check both have a non-null user id.
+			userData.setIdentity({ userId: session.user, fullName: session.user })
 			log.info("Desktop login complete", { user: session.user })
 		} catch (error) {
 			log.error("Desktop login failed", error)

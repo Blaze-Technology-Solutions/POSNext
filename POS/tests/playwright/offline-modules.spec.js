@@ -95,7 +95,7 @@ test.describe("offline modules in real chromium", () => {
 		// console errors — the app legitimately logs API failures
 		// (PermissionError, translation 417) when the test runs without
 		// a backend session, and those are not what this smoke checks.
-		await page.goto("/", { waitUntil: "domcontentloaded" })
+		await page.goto("/pos/", { waitUntil: "domcontentloaded" })
 		await page.waitForLoadState("networkidle", { timeout: 30_000 })
 
 		// Sanity: Vue mounted *something*. The body should have content.

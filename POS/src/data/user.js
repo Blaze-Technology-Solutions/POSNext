@@ -4,7 +4,10 @@ import { computed, reactive } from "vue"
 
 const getCookie = (key) => {
 	const cookies = new Map(
-		document.cookie.split("; ").filter(Boolean).map((c) => c.split("=").map(decodeURIComponent))
+		document.cookie
+			.split("; ")
+			.filter(Boolean)
+			.map((c) => c.split("=").map(decodeURIComponent)),
 	)
 	return cookies.get(key) || null
 }
@@ -27,8 +30,28 @@ export const userData = reactive({
 		}
 	},
 
+	/**
+	 * Desktop builds run from a `tauri://` origin and never receive the
+	 * Frappe session cookies (auth is API-key/secret in the Authorization
+	 * header). The login flow calls this directly with whatever it knows
+	 * about the user so the avatar, header display name, and session-lock
+	 * cached-password ownership check all keep working.
+	 */
+	setIdentity({ userId, fullName, userImage } = {}) {
+		if (userId && userId !== "Guest") {
+			this.userId = userId
+			this.fullName = fullName || this.fullName || userId
+			this.userImage = userImage || this.userImage
+		}
+	},
+
 	getDisplayName() {
-		return this.fullName || window.frappe?.session?.user_fullname || window.frappe?.session?.user || "User"
+		return (
+			this.fullName ||
+			window.frappe?.session?.user_fullname ||
+			window.frappe?.session?.user ||
+			"User"
+		)
 	},
 
 	getImageUrl() {
@@ -37,7 +60,9 @@ export const userData = reactive({
 
 	getInitials() {
 		const parts = this.getDisplayName().split(" ").filter(Boolean)
-		return parts.length >= 2 ? (parts[0][0] + parts[1][0]).toUpperCase() : this.getDisplayName().substring(0, 2).toUpperCase()
+		return parts.length >= 2
+			? (parts[0][0] + parts[1][0]).toUpperCase()
+			: this.getDisplayName().substring(0, 2).toUpperCase()
 	},
 })
 
@@ -46,7 +71,7 @@ userData.refresh()
 
 // Watch for cookie changes (e.g., after login) and auto-refresh
 // This uses MutationObserver to detect document.cookie changes
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
 	let lastCookie = document.cookie
 	setInterval(() => {
 		if (document.cookie !== lastCookie) {
