@@ -28,6 +28,7 @@ import {
 	cacheBrandsFromServer,
 	syncOfflineCustomers,
 	prefetchItemImages,
+	safeAppendRecoveryEvent,
 } from "@/utils/offline"
 import { call } from "@/utils/apiWrapper"
 import { logger } from "@/utils/logger"
@@ -234,6 +235,32 @@ export const usePOSSyncStore = defineStore("posSync", () => {
 	async function saveInvoiceOffline(invoiceData) {
 		try {
 			const result = await offlineWorker.saveOfflineInvoice(invoiceData)
+			const offlineId = result?.offline_id || invoiceData?.offline_id || null
+			await safeAppendRecoveryEvent({
+				event_type: "invoice_created",
+				doctype: "Sales Invoice",
+				offline_id: offlineId,
+				pos_profile: invoiceData?.pos_profile,
+				company: invoiceData?.company,
+				pos_opening_shift: invoiceData?.posa_pos_opening_shift,
+				payload: {
+					...invoiceData,
+					offline_id: offlineId,
+				},
+			})
+			await safeAppendRecoveryEvent({
+				event_type: "invoice_queued",
+				doctype: "Sales Invoice",
+				offline_id: offlineId,
+				pos_profile: invoiceData?.pos_profile,
+				company: invoiceData?.company,
+				pos_opening_shift: invoiceData?.posa_pos_opening_shift,
+				payload: {
+					...invoiceData,
+					offline_id: offlineId,
+					queue_id: result?.id || null,
+				},
+			})
 			await updatePendingCount()
 			log.info("Invoice saved offline successfully")
 			return result || { success: true }

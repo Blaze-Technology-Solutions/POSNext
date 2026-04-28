@@ -104,6 +104,10 @@ const CURRENT_SCHEMA = {
 	// Queue for customers created while offline; replayed on reconnect
 	// offline_id is a UUID for deduplication across syncs
 	customer_queue: "++id, &offline_id, timestamp, synced",
+
+	// Append-only audit trail for offline recovery exports
+	recovery_journal:
+		"++id, &event_id, event_type, event_time, offline_id, server_docname, pos_profile, terminal_id, record_hash",
 }
 
 /**

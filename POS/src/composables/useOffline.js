@@ -29,12 +29,15 @@ export function useOffline() {
 		}
 	}
 
-	// Save invoice offline using worker
+	// Save invoice offline using worker.
+	// Recovery-journal writes intentionally live in posSync.saveInvoiceOffline
+	// (the canonical save path used by POSSale.vue). Adding them here too
+	// would double-journal any caller that uses both wrappers.
 	const saveInvoiceOffline = async (invoiceData) => {
 		try {
-			await offlineWorker.saveOfflineInvoice(invoiceData)
+			const result = await offlineWorker.saveOfflineInvoice(invoiceData)
 			await updatePendingCount()
-			return true
+			return result || true
 		} catch (error) {
 			console.error("[useOffline] Error saving invoice offline:", error)
 			throw error
@@ -113,7 +116,8 @@ export function useOffline() {
 
 		// Update reactive refs
 		isOffline.value = nowOffline
-		connectionQuality.value = state.quality || offlineState.getConnectionQuality()
+		connectionQuality.value =
+			state.quality || offlineState.getConnectionQuality()
 
 		// Detect transition from offline to online
 		if (wasOffline && !nowOffline) {
@@ -138,7 +142,9 @@ export function useOffline() {
 
 	// Handle invoice sync completion
 	const handleInvoicesSynced = () => {
-		console.log("[useOffline] Invoices synced event received, updating count...")
+		console.log(
+			"[useOffline] Invoices synced event received, updating count...",
+		)
 		updatePendingCount()
 	}
 

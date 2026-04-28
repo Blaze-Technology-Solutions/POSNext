@@ -45,6 +45,12 @@ Welcome to the POS Next documentation directory. This folder contains comprehens
   - Recovery workflows after browser wipe
   - Vitest + Playwright test layout
 
+- **[OFFLINE_RECOVERY_ROADMAP.md](OFFLINE_RECOVERY_ROADMAP.md)** - Proposed offline audit and recovery package roadmap
+  - Append-only local journal for pending and successful records
+  - Desktop recovery export package
+  - Frappe custom upload page for validation
+  - Missing invoice/payment detection and controlled replay plan
+
 - **[PRICING_AND_SUBMISSION.md](PRICING_AND_SUBMISSION.md)** - Pricing and invoice submission flow
   - Rate vs Price List Rate concepts
   - Tax modes (inclusive/exclusive)
@@ -105,6 +111,7 @@ docs/
 ├── OFFERS_AND_PROMOTIONS.md         # Offers and promotions system
 ├── OFFLINE_SYNC.md                  # Offline invoice sync system
 ├── OFFLINE_DATA_GUIDE.md            # Offline data caches + durability layers
+├── OFFLINE_RECOVERY_ROADMAP.md      # Offline audit + recovery package plan
 ├── PRICING_AND_SUBMISSION.md        # Pricing and invoice submission flow
 ├── STARTUP_SEQUENCE.md              # Application initialization flow
 ├── VERSION_CONTROL.md               # Comprehensive version control guide

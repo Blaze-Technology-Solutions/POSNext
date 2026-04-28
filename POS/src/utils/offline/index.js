@@ -114,3 +114,12 @@ export {
 	enableDiskMirror,
 	disableDiskMirror,
 } from "./diskBackup"
+
+export {
+	appendRecoveryEvent,
+	safeAppendRecoveryEvent,
+	getRecoveryJournalRows,
+	buildRecoveryPackage,
+	downloadRecoveryPackage,
+	getTerminalId,
+} from "./recoveryJournal"

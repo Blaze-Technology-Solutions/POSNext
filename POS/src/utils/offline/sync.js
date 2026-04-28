@@ -6,6 +6,7 @@ import { tauriFetch } from "@/utils/desktopTransport"
 import { db } from "./db"
 import { offlineState } from "./offlineState"
 import { removeOfflineReceiptPayload } from "./offlineReceiptCache"
+import { safeAppendRecoveryEvent } from "./recoveryJournal"
 import { generateOfflineId } from "./uuid"
 
 // Re-export for backwards compatibility
@@ -119,6 +120,16 @@ export const saveOfflineInvoice = async (invoiceData) => {
 		.filter((d) => d.item_code && d.warehouse && d.qty > 0)
 
 	const timestamp = Date.now()
+	await safeAppendRecoveryEvent({
+		event_type: "invoice_created",
+		doctype: "Sales Invoice",
+		offline_id: offlineId,
+		pos_profile: cleanData.pos_profile,
+		company: cleanData.company,
+		pos_opening_shift: cleanData.posa_pos_opening_shift,
+		payload: cleanData,
+	})
+
 	const id = await db.invoice_queue.add({
 		offline_id: offlineId,
 		data: cleanData,
@@ -127,6 +138,21 @@ export const saveOfflineInvoice = async (invoiceData) => {
 		retry_count: 0,
 		stock_delta: stockDelta,
 		stock_reverted: false,
+	})
+
+	await safeAppendRecoveryEvent({
+		event_type: "invoice_queued",
+		doctype: "Sales Invoice",
+		offline_id: offlineId,
+		pos_profile: cleanData.pos_profile,
+		company: cleanData.company,
+		pos_opening_shift: cleanData.posa_pos_opening_shift,
+		payload: {
+			...cleanData,
+			queue_id: id,
+			timestamp,
+			stock_delta: stockDelta,
+		},
 	})
 
 	await updateLocalStock(cleanData.items)
@@ -450,6 +476,21 @@ const syncInvoiceToServer = async (invoice, retryCount = 0) => {
 		const syncStatus = await checkOfflineIdSynced(offlineId)
 		if (syncStatus.synced) {
 			await markInvoiceSynced(invoice.id, syncStatus.sales_invoice, offlineId)
+			await safeAppendRecoveryEvent({
+				event_type: "invoice_submit_success",
+				doctype: "Sales Invoice",
+				offline_id: offlineId,
+				server_docname: syncStatus.sales_invoice,
+				pos_profile: invoice.data?.pos_profile,
+				company: invoice.data?.company,
+				pos_opening_shift: invoice.data?.posa_pos_opening_shift,
+				payload: {
+					...invoice.data,
+					queue_id: invoice.id,
+					sync_status: "already_synced",
+					server_invoice: syncStatus.sales_invoice,
+				},
+			})
 			log.debug("Invoice already synced, skipping", {
 				id: invoice.id,
 				offline_id: offlineId,
@@ -463,6 +504,20 @@ const syncInvoiceToServer = async (invoice, retryCount = 0) => {
 	const invoiceData = normalizeInvoiceForSync(invoice.data, offlineId)
 
 	try {
+		await safeAppendRecoveryEvent({
+			event_type: "invoice_submit_attempt",
+			doctype: "Sales Invoice",
+			offline_id: offlineId,
+			pos_profile: invoiceData.pos_profile,
+			company: invoiceData.company,
+			pos_opening_shift: invoiceData.posa_pos_opening_shift,
+			payload: {
+				...invoiceData,
+				queue_id: invoice.id,
+				retry_count: invoice.retry_count || 0,
+			},
+		})
+
 		const response = await call("pos_next.api.invoices.submit_invoice", {
 			data: JSON.stringify({ invoice: invoiceData, data: {} }),
 		})
@@ -470,6 +525,21 @@ const syncInvoiceToServer = async (invoice, retryCount = 0) => {
 		if (response.message || response.name) {
 			const serverName = response.name || response.message
 			await markInvoiceSynced(invoice.id, serverName, offlineId)
+			await safeAppendRecoveryEvent({
+				event_type: "invoice_submit_success",
+				doctype: "Sales Invoice",
+				offline_id: offlineId,
+				server_docname: serverName,
+				pos_profile: invoiceData.pos_profile,
+				company: invoiceData.company,
+				pos_opening_shift: invoiceData.posa_pos_opening_shift,
+				payload: {
+					...invoiceData,
+					queue_id: invoice.id,
+					server_invoice: serverName,
+					server_response: response,
+				},
+			})
 			log.success("Invoice synced", {
 				id: invoice.id,
 				offline_id: offlineId,
@@ -539,6 +609,21 @@ export const syncOfflineInvoices = async () => {
 						invoiceName,
 						invoice.offline_id || invoice.data?.offline_id,
 					)
+					await safeAppendRecoveryEvent({
+						event_type: "invoice_submit_success",
+						doctype: "Sales Invoice",
+						offline_id: invoice.offline_id || invoice.data?.offline_id,
+						server_docname: invoiceName,
+						pos_profile: invoice.data?.pos_profile,
+						company: invoice.data?.company,
+						pos_opening_shift: invoice.data?.posa_pos_opening_shift,
+						payload: {
+							...invoice.data,
+							queue_id: invoice.id,
+							sync_status: "duplicate_marked_synced",
+							server_invoice: invoiceName,
+						},
+					})
 					log.debug("Invoice is duplicate, marked as synced", {
 						id: invoice.id,
 					})
@@ -555,6 +640,20 @@ export const syncOfflineInvoices = async () => {
 				})
 
 				await handleSyncFailure(invoice, error.message)
+				await safeAppendRecoveryEvent({
+					event_type: "invoice_submit_failure",
+					doctype: "Sales Invoice",
+					offline_id: invoice.offline_id || invoice.data?.offline_id,
+					pos_profile: invoice.data?.pos_profile,
+					company: invoice.data?.company,
+					pos_opening_shift: invoice.data?.posa_pos_opening_shift,
+					payload: {
+						...invoice.data,
+						queue_id: invoice.id,
+						retry_count: (invoice.retry_count || 0) + 1,
+						error: error.message || String(error),
+					},
+				})
 				result.failed++
 			}
 		}
