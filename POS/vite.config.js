@@ -86,6 +86,13 @@ export default defineConfig(({ mode }) => {
 					frappeProxy: false,
 					jinjaBootData: false,
 					lucideIcons: true,
+					// Redirect frappeui's default outDir (pos_next/public/frontend)
+					// at desktop/dist-frontend so Tauri can pick up the bundle.
+					buildConfig: {
+						outDir: "../desktop/dist-frontend",
+						emptyOutDir: true,
+						sourcemap: enableSourceMap,
+					},
 				})
 			: frappeui({
 					frappeProxy: true,
