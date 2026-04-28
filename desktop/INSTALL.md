@@ -397,15 +397,18 @@ The pingServer hits `/api/method/pos_next.api.ping` every 30s. If your firewall 
 When debugging on a customer's machine you may want to inspect:
 
 - **App config + Stronghold vault**: `%APPDATA%\com.blazetech.posnext.<slug>\`
+- **Persistent log file** (auto-rotating, 10 MB cap): `%APPDATA%\com.blazetech.posnext.<slug>\logs\pos-next.log`
+   - Captures every `info`/`warn`/`error` from the app (including HTTP 4xx/5xx with URL + body snippet, login failures, sync errors, worker crashes, update failures).
+   - Older logs roll over to `pos-next.log.1`, `pos-next.log.2`, etc.
+   - Open with Notepad / VS Code / any text editor. Plain text, one line per event with timestamp, level, namespace, message.
+   - **Send this file as a support ticket attachment** when reporting trouble.
 - **IndexedDB (cached items, queues)**: `%LOCALAPPDATA%\com.blazetech.posnext.<slug>\EBWebView\Default\IndexedDB\`
 - **QZ disk mirror**: `%APPDATA%\QZ\sandbox\tauri-localhost\pos_next\`
-- **Logs**: open the app, F12 → Console. To get a saved log, paste this in the console:
-
-  ```js
-  copy(JSON.stringify(window.posLogger.export(), null, 2))
-  ```
-
-  Then paste the result into a support ticket.
+- **Live logs in-app** (debug builds only): F12 → Console. The same lines that hit the file also appear in the devtools console.
+   ```js
+   copy(JSON.stringify(window.posLogger.export(), null, 2))
+   ```
+   Then paste the result into a support ticket.
 
 ### F.6 — Reset everything (nuclear option)
 
