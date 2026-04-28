@@ -15,6 +15,8 @@
  */
 
 import { logger } from "../logger"
+import { apiUrl, getAuthHeader, runtimeConfig } from "../runtimeConfig"
+import { tauriFetch } from "../desktopTransport"
 
 const log = logger.create("OfflineState")
 
@@ -238,6 +240,16 @@ class NetworkMonitor {
 		const startTime = performance.now()
 		let success = false
 		let latency = 0
+		const fetchFn = runtimeConfig?.useRustTransport ? tauriFetch : fetch
+		const url = runtimeConfig?.useRustTransport
+			? apiUrl(CONFIG.PING_URL)
+			: CONFIG.PING_URL
+		const headers = {
+			Accept: "application/json",
+			"Cache-Control": "no-cache",
+		}
+		const auth = getAuthHeader?.()
+		if (auth) headers.Authorization = auth
 
 		// Try ping with retries
 		for (let attempt = 1; attempt <= CONFIG.PING_RETRY_COUNT; attempt++) {
@@ -248,13 +260,11 @@ class NetworkMonitor {
 					CONFIG.PING_TIMEOUT_MS,
 				)
 
-				const response = await fetch(CONFIG.PING_URL, {
+				const response = await fetchFn(url, {
 					method: "GET",
 					signal: controller.signal,
 					cache: "no-store",
-					headers: {
-						"Cache-Control": "no-cache",
-					},
+					headers,
 				})
 
 				clearTimeout(timeoutId)

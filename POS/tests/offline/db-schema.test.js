@@ -13,6 +13,7 @@ const NEW_TABLES = [
 	"brands",
 	"loyalty_programs",
 	"customer_queue",
+	"recovery_journal",
 ]
 
 describe("offline db schema", () => {

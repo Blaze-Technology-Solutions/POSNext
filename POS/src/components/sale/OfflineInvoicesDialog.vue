@@ -29,6 +29,20 @@
 							{{ __('Restore from Disk') }}
 						</Button>
 						<Button
+							@click="exportRecoveryFile"
+							:loading="isExporting"
+							variant="subtle"
+							class="whitespace-nowrap w-full sm:w-auto text-sm"
+							:title="__('Download a recovery file with the local audit journal and pending queues.')"
+						>
+							<template #prefix>
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414A1 1 0 0119 9.414V19a2 2 0 01-2 2z"/>
+								</svg>
+							</template>
+							{{ __('Export Recovery') }}
+						</Button>
+						<Button
 							v-if="!isOffline && invoices.length > 0"
 							@click="syncAll"
 							:loading="isSyncing"
@@ -264,6 +278,7 @@ import {
 	DEFAULT_CURRENCY,
 	formatCurrency as formatCurrencyUtil,
 } from "@/utils/currency"
+import { downloadRecoveryPackage } from "@/utils/offline"
 import { Button, Dialog } from "frappe-ui"
 import { computed, ref, watch } from "vue"
 
@@ -298,6 +313,25 @@ const emit = defineEmits([
 ])
 
 const isRestoring = ref(false)
+const isExporting = ref(false)
+
+async function exportRecoveryFile() {
+	if (isExporting.value) return
+	isExporting.value = true
+	try {
+		const result = await downloadRecoveryPackage()
+		window.alert?.(
+			__("Recovery file exported: {0}", [result.filename]),
+		)
+	} catch (error) {
+		console.error("Recovery export failed:", error)
+		window.alert?.(
+			__("Recovery export failed: {0}", [error?.message || error]),
+		)
+	} finally {
+		isExporting.value = false
+	}
+}
 
 async function restoreFromDiskMirror() {
 	if (isRestoring.value) return
