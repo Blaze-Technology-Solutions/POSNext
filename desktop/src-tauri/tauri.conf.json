@@ -4,8 +4,6 @@
 	"version": "0.1.0",
 	"identifier": "com.blazetech.posnext",
 	"build": {
-		"beforeBuildCommand": "yarn --cwd ../../POS build:desktop",
-		"beforeDevCommand": "yarn --cwd ../../POS dev:desktop",
 		"devUrl": "http://localhost:8080",
 		"frontendDist": "../dist-frontend"
 	},

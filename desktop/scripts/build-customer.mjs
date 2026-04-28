@@ -86,11 +86,11 @@ function mergeConfig(base, customer) {
 }
 
 function copyIcons(customer) {
-	if (!customer.iconDir) return
+	if (!customer.iconDir) return false
 	const src = resolve(desktopRoot, customer.iconDir)
 	if (!existsSync(src) || !statSync(src).isDirectory()) {
-		console.warn(`! iconDir ${src} does not exist; using default icons`)
-		return
+		console.warn(`! iconDir ${src} does not exist; will auto-generate`)
+		return false
 	}
 	const dest = join(tauriDir, "icons")
 	mkdirSync(dest, { recursive: true })
@@ -98,6 +98,30 @@ function copyIcons(customer) {
 		copyFileSync(join(src, name), join(dest, name))
 	}
 	console.log(`✓ Copied icons from ${src}`)
+	return true
+}
+
+/**
+ * Tauri's Windows bundler hard-requires icons/icon.ico. If the customer
+ * didn't ship an icon set, generate the full set (32x32.png, 128x128.png,
+ * 128x128@2x.png, icon.icns, icon.ico) from POS/public/favicon.png using
+ * `tauri icon`. This way the build never fails on missing icons.
+ */
+function ensureIcons() {
+	const iconDest = join(tauriDir, "icons")
+	const requiredIco = join(iconDest, "icon.ico")
+	if (existsSync(requiredIco)) return
+	const source = join(repoRoot, "POS", "public", "favicon.png")
+	if (!existsSync(source)) {
+		die(`No icon source at ${source}; cannot auto-generate icons`)
+	}
+	console.log(`▶ Auto-generating icon set from ${source}`)
+	mkdirSync(iconDest, { recursive: true })
+	run(
+		"yarn",
+		["--cwd", desktopRoot, "tauri", "icon", source, "--output", iconDest],
+		{},
+	)
 }
 
 function run(cmd, args, opts = {}) {
@@ -123,6 +147,7 @@ function buildOne(slug) {
 	console.log(`✓ Wrote ${customConfigPath}`)
 
 	copyIcons(customer)
+	ensureIcons()
 
 	const env = {
 		...process.env,

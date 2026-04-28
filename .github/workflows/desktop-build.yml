@@ -131,19 +131,30 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: yarn
-          # POS/ has hundreds of deps and a stable lockfile — worth caching.
-          # desktop/ has one dep (@tauri-apps/cli); not worth a separate cache,
-          # and the lockfile may not exist yet on first run.
-          cache-dependency-path: POS/yarn.lock
+          # NOTE: yarn.lock is gitignored in this repo (see root .gitignore),
+          # so we can't use actions/setup-node's built-in yarn cache (which
+          # needs a lockfile to compute a cache key). Falling back to caching
+          # yarn's global cache dir keyed on package.json hash — saves the
+          # download cost even though the dependency resolution still re-runs
+          # on every build.
+
+      - name: Cache yarn global directory
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/Yarn/Cache
+            ~/.cache/yarn
+          key: yarn-${{ runner.os }}-${{ hashFiles('POS/package.json', 'desktop/package.json') }}
+          restore-keys: |
+            yarn-${{ runner.os }}-
 
       - name: Install JS dependencies (POS)
         shell: bash
-        run: cd POS && yarn install --frozen-lockfile
+        run: cd POS && yarn install --network-timeout 600000
 
       - name: Install JS dependencies (desktop)
         shell: bash
-        run: cd desktop && yarn install
+        run: cd desktop && yarn install --network-timeout 600000
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable

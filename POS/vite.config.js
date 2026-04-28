@@ -76,20 +76,35 @@ export default defineConfig(({ mode }) => {
 
 	const plugins = [
 		posNextBuildVersionPlugin(buildVersion),
-		// frappe-ui's vite plugin injects Jinja boot data + frappe proxy. We only
-		// want it on web builds; desktop runs without a same-origin Frappe shell.
-		!isDesktop &&
-			frappeui({
-				frappeProxy: true,
-				jinjaBootData: true,
-				lucideIcons: true,
-				buildConfig: {
-					indexHtmlPath: "../pos_next/www/pos.html",
-					outDir: "../pos_next/public/pos",
-					emptyOutDir: true,
-					sourcemap: enableSourceMap,
-				},
-			}),
+		// frappe-ui's vite plugin bundles four concerns: frappeProxy (dev-only),
+		// jinjaBootData (writes a Jinja index.html), lucideIcons (provides
+		// ~icons/lucide/* via unplugin-icons), and buildConfig (overrides
+		// outDir + indexHtmlPath). Web builds want everything; desktop builds
+		// only want the icons (no Frappe shell, no Jinja, custom outDir).
+		isDesktop
+			? frappeui({
+					frappeProxy: false,
+					jinjaBootData: false,
+					lucideIcons: true,
+					// Redirect frappeui's default outDir (pos_next/public/frontend)
+					// at desktop/dist-frontend so Tauri can pick up the bundle.
+					buildConfig: {
+						outDir: "../desktop/dist-frontend",
+						emptyOutDir: true,
+						sourcemap: enableSourceMap,
+					},
+				})
+			: frappeui({
+					frappeProxy: true,
+					jinjaBootData: true,
+					lucideIcons: true,
+					buildConfig: {
+						indexHtmlPath: "../pos_next/www/pos.html",
+						outDir: "../pos_next/public/pos",
+						emptyOutDir: true,
+						sourcemap: enableSourceMap,
+					},
+				}),
 		vue(),
 		viteStaticCopy({
 			targets: [
@@ -242,6 +257,16 @@ export default defineConfig(({ mode }) => {
 			emptyOutDir: true,
 			target: "es2015",
 			sourcemap: enableSourceMap,
+			rollupOptions: isDesktop
+				? {
+						// virtual:pwa-register is provided by VitePWA, which is
+						// disabled in desktop builds. main.js still has a guarded
+						// dynamic import of it (runtime-gated by hasServiceWorker),
+						// so we mark it external here so Rollup doesn't try to
+						// resolve it. The runtime guard ensures it's never reached.
+						external: ["virtual:pwa-register"],
+				  }
+				: {},
 		},
 		worker: {
 			format: "es",
