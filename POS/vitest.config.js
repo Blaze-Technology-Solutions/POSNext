@@ -16,6 +16,7 @@ export default defineConfig({
 			"@tauri-apps/plugin-updater": path.resolve(__dirname, "./tests/stubs/tauri-updater.js"),
 			"@tauri-apps/plugin-process": path.resolve(__dirname, "./tests/stubs/tauri-process.js"),
 			"@tauri-apps/api/path": path.resolve(__dirname, "./tests/stubs/tauri-path.js"),
+			"@tauri-apps/api/core": path.resolve(__dirname, "./tests/stubs/tauri-core.js"),
 		},
 	},
 	define: {

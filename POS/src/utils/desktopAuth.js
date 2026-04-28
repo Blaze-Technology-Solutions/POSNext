@@ -13,7 +13,6 @@
  */
 
 import {
-	apiUrl,
 	clearApiCredentials,
 	runtimeConfig,
 	setApiCredentials,
@@ -163,34 +162,15 @@ export async function clearStoredApiCredentials() {
 }
 
 /**
- * Pull the sid value out of a Set-Cookie response header. Handles both the
- * single-string form (older fetch APIs) and the modern getSetCookie() array.
- */
-function extractSid(response) {
-	const candidates = []
-	if (typeof response.headers.getSetCookie === "function") {
-		candidates.push(...response.headers.getSetCookie())
-	}
-	const single = response.headers.get("set-cookie")
-	if (single) candidates.push(single)
-	for (const raw of candidates) {
-		const match = raw.match(/sid=([^;]+)/)
-		if (match) return match[1]
-	}
-	return null
-}
-
-/**
- * Submit a Frappe email/password login through the Tauri HTTP plugin and
- * trade it for an API key+secret pair via `generate_keys`. Returns the
- * pair without persisting — the caller should call `persistApiCredentials`
- * on success.
+ * Submit a Frappe email/password login and trade it for an API key+secret
+ * pair via `generate_keys`. The whole flow runs on the Rust side via the
+ * `frappe_login` Tauri command (see desktop/src-tauri/src/lib.rs) because
+ * Tauri's plugin-http silently strips the `Cookie` header from JS-side
+ * fetch calls (Fetch spec "forbidden header"), and we need that cookie
+ * to chain login → generate_keys without re-authenticating.
  *
- * Tauri's HTTP plugin doesn't share a cookie jar between requests, so we
- * pull the `sid` out of the login response and pass it as an explicit
- * Cookie header on the generate_keys call. Frappe's generate_keys returns
- * both api_key and api_secret in a single response, so no third call is
- * needed.
+ * Returns the key pair without persisting — the caller should call
+ * `persistApiCredentials` on success.
  *
  * @param {{ email: string, password: string }} creds
  */
@@ -198,50 +178,23 @@ export async function loginAndGenerateKeys({ email, password }) {
 	if (!runtimeConfig.isDesktop) {
 		throw new Error("loginAndGenerateKeys is desktop-only")
 	}
-	const { fetch: tFetch } = await import("@tauri-apps/plugin-http")
-
-	const loginRes = await tFetch(apiUrl("/api/method/login"), {
-		method: "POST",
-		headers: { "Content-Type": "application/json", Accept: "application/json" },
-		body: JSON.stringify({ usr: email, pwd: password }),
-	})
-	if (!loginRes.ok) {
-		const text = await loginRes.text().catch(() => "")
-		throw new Error(
-			`Login failed (${loginRes.status}): ${text || "invalid credentials"}`,
-		)
+	const { invoke } = await import("@tauri-apps/api/core")
+	try {
+		const result = await invoke("frappe_login", {
+			baseUrl: runtimeConfig.baseUrl,
+			email,
+			password,
+		})
+		const apiKey = result?.apiKey
+		const apiSecret = result?.apiSecret
+		if (!apiKey || !apiSecret) {
+			throw new Error("Rust login command returned no credentials")
+		}
+		return { apiKey, apiSecret }
+	} catch (error) {
+		// Tauri command errors come back as strings (the Err(String) variant)
+		const message =
+			typeof error === "string" ? error : error?.message || String(error)
+		throw new Error(message)
 	}
-
-	const sid = extractSid(loginRes)
-	if (!sid) {
-		throw new Error(
-			"Login succeeded but no sid cookie was returned. The Frappe site may be misconfigured.",
-		)
-	}
-
-	const keysRes = await tFetch(
-		apiUrl(
-			`/api/method/frappe.core.doctype.user.user.generate_keys?user=${encodeURIComponent(email)}`,
-		),
-		{
-			method: "POST",
-			headers: {
-				Accept: "application/json",
-				Cookie: `sid=${sid}`,
-			},
-		},
-	)
-	if (!keysRes.ok) {
-		const text = await keysRes.text().catch(() => "")
-		throw new Error(`generate_keys failed (${keysRes.status}): ${text}`)
-	}
-	const data = await keysRes.json()
-	const message = data?.message || data
-	const apiKey = message?.api_key
-	const apiSecret = message?.api_secret
-	if (!apiKey || !apiSecret) {
-		throw new Error("generate_keys response missing api_key or api_secret")
-	}
-
-	return { apiKey, apiSecret }
 }
