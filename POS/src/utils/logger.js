@@ -75,7 +75,7 @@ function _mirrorToFile(level, namespace, message, args) {
 				: level === LOG_LEVELS.WARN
 					? mod.warn
 					: mod.info
-		const line = `[${namespace}] ${message}${args.length ? " " + _stringifyForFile(args) : ""}`
+		const line = `[${namespace}] ${message}${args.length ? ` ${_stringifyForFile(args)}` : ""}`
 		try {
 			fn(line)
 		} catch {

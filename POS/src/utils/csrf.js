@@ -6,7 +6,7 @@ const CSRF_TOKEN_ENDPOINT = "/api/method/pos_next.api.utilities.get_csrf_token"
 
 let refreshPromise = null
 let lastKnownToken = null
-let tokenRefreshCallbacks = [] // Callbacks to notify when token is refreshed
+const tokenRefreshCallbacks = [] // Callbacks to notify when token is refreshed
 
 function readCookie(name) {
 	const value = `; ${document.cookie}`
@@ -40,7 +40,7 @@ function setGlobalToken(token, source) {
 		lastKnownToken = token
 
 		// Notify all registered callbacks about the token refresh
-		tokenRefreshCallbacks.forEach(callback => {
+		tokenRefreshCallbacks.forEach((callback) => {
 			try {
 				callback(token)
 			} catch (error) {
@@ -53,7 +53,7 @@ function setGlobalToken(token, source) {
 }
 
 export function onCSRFTokenRefresh(callback) {
-	if (typeof callback === 'function') {
+	if (typeof callback === "function") {
 		tokenRefreshCallbacks.push(callback)
 	}
 }
@@ -232,6 +232,23 @@ export function createCSRFAwareRequest(
 			if (runtimeConfig.isDesktop) {
 				throw error
 			}
+
+			// frappe-ui's request layer can throw a TypeError on network failures
+			// (when it tries to read `error.response.data.exc` but `response` is
+			// undefined). Normalize that into a regular, parseable error so callers
+			// can handle offline / backend-down cases without crashing the app.
+			if (
+				error instanceof TypeError &&
+				/reading 'exc'|reading \"exc\"|\\bexc\\b/i.test(String(error?.message))
+			) {
+				const normalized = new Error(
+					"Network error: unable to reach the server (offline or backend down)",
+				)
+				normalized.exc_type = "NetworkError"
+				normalized.status = 0
+				throw normalized
+			}
+
 			if (isCSRFApiError(error)) {
 				if (!silent) {
 					console.warn(

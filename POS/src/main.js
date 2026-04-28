@@ -14,7 +14,7 @@ import { createApp } from "vue"
 
 import App from "./App.vue"
 import { session, sessionUser } from "./data/session"
-import { userResource } from "./data/user"
+import { userResource, userData } from "./data/user"
 import router from "./router"
 import {
 	createCSRFAwareRequest,
@@ -50,6 +50,32 @@ import "./index.css"
 const log = logger.create("Main")
 
 // =============================================================================
+// Global Unhandled-Rejection Guard
+// =============================================================================
+//
+// When the backend is unreachable (offline / server down), some background
+// fire-and-forget resource fetches can reject without an attached `catch`,
+// which surfaces as an uncaught exception in the browser.
+//
+// We treat network failures as non-fatal and prevent them from crashing the
+// SPA. The calling code still receives the rejection when awaited; this only
+// suppresses truly *unhandled* rejections.
+if (typeof window !== "undefined") {
+	window.addEventListener("unhandledrejection", (event) => {
+		const reason = event?.reason
+		const message = String(reason?.message || reason || "")
+		if (
+			/Network error: unable to reach the server/i.test(message) ||
+			/Failed to fetch/i.test(message) ||
+			/ECONNREFUSED/i.test(message)
+		) {
+			event.preventDefault()
+			log.debug("Suppressed unhandled network rejection", message)
+		}
+	})
+}
+
+// =============================================================================
 // PWA Service Worker Registration
 // =============================================================================
 
@@ -62,16 +88,29 @@ if (runtimeConfig.hasServiceWorker && "serviceWorker" in navigator) {
 			// disabled in desktop builds — the outer runtime guard above
 			// (runtimeConfig.hasServiceWorker) ensures we never actually call
 			// import() in desktop mode, so leaving it dynamic is safe.
-			import(/* @vite-ignore */ "virtual:pwa-register").then(({ registerSW }) => {
-				registerSW({
-					immediate: true,
-					onNeedRefresh: () => log.info("New content available, reloading..."),
-					onOfflineReady: () => log.info("App ready to work offline"),
-					onRegistered: (reg) => log.info("Service Worker registered", reg),
-					onRegisterError: (err) =>
-						log.error("Service Worker registration error", err),
+			// When the PWA plugin is disabled (e.g. `VITE_ENABLE_PWA=false` in
+			// development), the virtual module doesn't exist. Keeping the
+			// specifier in a variable prevents Vite from trying to resolve it
+			// at transform time.
+			const pwaRegisterModule = "virtual:pwa-register"
+			import(/* @vite-ignore */ pwaRegisterModule)
+				.then(({ registerSW }) => {
+					registerSW({
+						immediate: true,
+						onNeedRefresh: () =>
+							log.info("New content available, reloading..."),
+						onOfflineReady: () => log.info("App ready to work offline"),
+						onRegistered: (reg) => log.info("Service Worker registered", reg),
+						onRegisterError: (err) =>
+							log.error("Service Worker registration error", err),
+					})
 				})
-			})
+				.catch((err) => {
+					// Dev builds commonly disable the PWA plugin via
+					// `VITE_ENABLE_PWA=false`, which removes the virtual module.
+					// Never let that crash the SPA.
+					log.debug("PWA register module unavailable; skipping SW", err)
+				})
 		},
 		{ passive: true },
 	)
@@ -159,7 +198,9 @@ async function initializeApp() {
 
 	// Disable double-tap zoom on mobile for faster touch response
 	app.directive("touch-action", {
-		mounted: (el) => (el.style.touchAction = "manipulation"),
+		mounted: (el) => {
+			el.style.touchAction = "manipulation"
+		},
 	})
 
 	// -------------------------------------------------------------------------
@@ -172,8 +213,9 @@ async function initializeApp() {
 	let user = null
 
 	if (runtimeConfig.isDesktop) {
+		let restored = null
 		try {
-			const restored = await restoreApiCredentialsFromStronghold()
+			restored = await restoreApiCredentialsFromStronghold()
 			if (restored) {
 				log.info("Restored API credentials from Stronghold")
 				await syncApiConfigToWorker()
@@ -185,16 +227,27 @@ async function initializeApp() {
 		}
 
 		if (getAuthHeader()) {
+			// Having a valid Authorization header is itself proof of login —
+			// every subsequent API call is authenticated by it. Try to enrich
+			// with the canonical email from get_logged_user, but fall back to
+			// the email we cached in Stronghold so a transient network blip
+			// during boot doesn't strand the user on the Login page.
+			let resolvedUser = restored?.userEmail || null
 			try {
 				if (!userResource.loading) userResource.fetch()
 				await userResource.promise
-				user = sessionUser()
+				if (userResource.data) resolvedUser = userResource.data
 			} catch (error) {
 				log.debug(
-					"Desktop user fetch failed (likely invalid creds)",
+					"Desktop user fetch failed; using Stronghold cached email",
 					error?.message || error,
 				)
-				user = null
+			}
+			user = resolvedUser
+			if (user) {
+				// No cookies in desktop mode — populate userData so the header
+				// avatar / display name / session-lock ownership checks work.
+				userData.setIdentity({ userId: user, fullName: user })
 			}
 		}
 	} else {
