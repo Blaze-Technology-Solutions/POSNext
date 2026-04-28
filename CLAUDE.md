@@ -4,12 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository layout
 
-This is a **Frappe/ERPNext v15 app** (`pos_next`) that ships a modern POS frontend. The repo contains two distinct code bases side by side:
+This is a **Frappe/ERPNext v15 app** (`pos_next`) that ships a modern POS frontend. The repo contains three distinct code bases side by side:
 
 - [pos_next/](pos_next/) — Python Frappe app (API, DocTypes, hooks, overrides, fixtures, server-side services). This is what `bench install-app pos_next` installs.
 - [POS/](POS/) — Vue 3 / Vite / Tailwind frontend. It builds into `pos_next/public/pos/` and is served at `/pos` via the `website_route_rules` in [pos_next/hooks.py](pos_next/hooks.py).
+- [desktop/](desktop/) — Tauri v2 shell that wraps the same `POS/` Vue app into a per-customer Windows `.exe`. Talks to a remote Frappe Cloud site instead of a same-origin bench. Per-customer build inputs live in `desktop/customers/<slug>.json` (gitignored — see [.github/workflows/desktop-build.yml](.github/workflows/desktop-build.yml) for the secret-based config flow).
 
-Do not confuse them: edit Python inside `pos_next/`, edit JS/Vue inside `POS/src/`.
+Do not confuse them: edit Python inside `pos_next/`, edit JS/Vue inside `POS/src/`, edit the Tauri shell inside `desktop/src-tauri/`.
 
 ## Common commands
 
@@ -38,6 +39,15 @@ cd POS && yarn test:coverage       # v8 coverage; report under POS/coverage/
 cd POS && yarn e2e                 # headless
 cd POS && yarn e2e:headed          # see the browser
 cd POS && yarn e2e:install         # install chromium binary if missing
+
+# Desktop (Tauri v2 / Windows .exe per customer). Run from repo root.
+# Requires `desktop/customers/<slug>.json` (see desktop/customers/_template.json).
+yarn desktop:dev <slug>            # vite dev + `tauri dev`, baseUrl=customer's siteUrl
+yarn desktop:build <slug>          # produces desktop/dist/<slug>/*-Setup.exe
+yarn desktop:build:all             # loops every desktop/customers/*.json
+yarn desktop:publish <slug>        # signs + writes latest.json for the GH Releases channel
+# Cross-platform: production .exe builds run on `windows-latest` via
+# `.github/workflows/desktop-build.yml`. Local Linux can build for dev only.
 
 # Backend: run from ~/frappe-bench
 bench --site <site> run-tests --app pos_next
@@ -109,9 +119,26 @@ Entry is [POS/src/main.js](POS/src/main.js). Startup sequence (documented in tha
 2. **Service-worker runtime caches** — covered above; protect assets and opportunistic API responses.
 3. **QZ-Tray on-disk mirror** — [POS/src/utils/offline/diskBackup.js](POS/src/utils/offline/diskBackup.js). Mirrors every queued invoice + customer to JSON files on the host filesystem via QZ Tray's sandbox file API (no certificate elevation needed). `restoreFromDisk()` re-inserts any rows missing from IndexedDB after a "Clear site data" or browser reinstall, and runs automatically 5 s after boot. A "Restore from Disk" button is exposed in the offline-invoices dialog. Best-effort: silently degrades to layers 1 + 2 when QZ isn't running.
 
-**Routing** ([POS/src/router.js](POS/src/router.js)) is minimal — three routes (`POSSale`, `Login`, catch-all) with an auth guard against `session.isLoggedIn`. Production base path is `/pos`.
+**Routing** ([POS/src/router.js](POS/src/router.js)) is minimal — three routes (`POSSale`, `Login`, catch-all) with an auth guard against `session.isLoggedIn`. Base path is branched on `runtimeConfig.isDesktop`: web is `/pos`, desktop is `/` (Tauri serves the bundle from the root of `tauri://localhost`).
 
 **Aliases**: `@` → `POS/src`. `tailwind.config.js` alias is set so `frappe-ui` components can resolve it.
+
+### Desktop (Tauri) build
+
+The same `POS/` Vue app ships unchanged inside a Tauri v2 shell as a per-customer Windows `.exe`. The frontend branches on **`runtimeConfig.isDesktop`** ([POS/src/utils/runtimeConfig.js](POS/src/utils/runtimeConfig.js)) — single source of truth for "where do we run, and against what backend." It reads `__POS_TARGET__` and `__FRAPPE_BASE_URL__` injected at build time by [POS/vite.config.js](POS/vite.config.js).
+
+What desktop mode changes vs. web:
+
+- **Transport**: every Frappe API call goes through [POS/src/utils/desktopTransport.js](POS/src/utils/desktopTransport.js) → `@tauri-apps/plugin-http` → Rust reqwest, which **bypasses the WebView's CORS** entirely. No preflights, no Frappe-side `Access-Control-*` config needed. Wired in [POS/src/main.js](POS/src/main.js) via `setConfig("resourceFetcher", desktopFrappeRequest)`. Short-form Frappe paths (e.g. `frappe.auth.get_logged_user`) get auto-prefixed with `/api/method/` by `normalizeFrappePath()` to match the original `frappeRequest` behaviour.
+- **Auth**: API key + secret as `Authorization: token <key>:<secret>`, **not** session cookies. The login flow runs in Rust ([desktop/src-tauri/src/lib.rs](desktop/src-tauri/src/lib.rs) → `frappe_login` Tauri command) because Tauri's plugin-http strips the `Cookie` header (Fetch spec "forbidden header"), which would break the `login → generate_keys` chain. Credentials are persisted in `tauri-plugin-stronghold` via [POS/src/utils/desktopAuth.js](POS/src/utils/desktopAuth.js).
+- **Identity**: there is no `user_id` cookie in `tauri://` — `session.user`, `userData.userId`, and the session-lock cached-password ownership check all read from `userResource.data` (the email returned by `get_logged_user`) or the Stronghold-cached email. Helper: `userData.setIdentity({userId, fullName})` in [POS/src/data/user.js](POS/src/data/user.js).
+- **Disabled subsystems**: PWA service worker, Socket.IO, CSRF — all short-circuit when `runtimeConfig.isDesktop` (see `runtimeConfig.hasServiceWorker`, `hasRealtime`, [POS/src/utils/csrf.js](POS/src/utils/csrf.js)). Real-time updates fall back to the existing realtime composables tolerating a no-op socket.
+- **Logging**: [POS/src/utils/logger.js](POS/src/utils/logger.js) mirrors warn/error to a rotating file via `tauri-plugin-log` so a cashier's machine can be debugged after the fact.
+- **Auto-update**: `tauri-plugin-updater` polled by [POS/src/composables/useDesktopUpdate.js](POS/src/composables/useDesktopUpdate.js) every 6 hours, banner in [POS/src/components/DesktopUpdateBanner.vue](POS/src/components/DesktopUpdateBanner.vue). Endpoint is a per-customer **mutable GitHub Release tag** (`desktop-channel-<slug>`) carrying `latest.json` + the signed installer. Signing key is per-customer minisign in `desktop/keys/` (gitignored).
+
+Per-customer build: [desktop/scripts/build-customer.mjs](desktop/scripts/build-customer.mjs) reads `desktop/customers/<slug>.json` (`{ siteUrl, displayName, identifier, version, updater }`), generates icons if missing, runs `vite build --mode desktop` with `VITE_POS_TARGET=desktop VITE_FRAPPE_BASE_URL=<siteUrl>`, then `tauri build`. Cross-platform `.exe` production builds run on `windows-latest` via [.github/workflows/desktop-build.yml](.github/workflows/desktop-build.yml) — customer configs are stored as `CUSTOMER_CONFIG_<SLUG_UPPER>` GitHub secrets, not committed.
+
+When editing the desktop subsystem, **always check the `.claude/skills/desktop/SKILL.md`** for the current set of conventions and gotchas — it's the authoritative quick-reference for the Tauri shell.
 
 ### Where to add things
 
@@ -121,12 +148,15 @@ Entry is [POS/src/main.js](POS/src/main.js). Startup sequence (documented in tha
 - New realtime event: emit from a `doc_events` handler in `pos_next/realtime_events.py`, subscribe in a `useRealtime*.js` composable.
 - New offline cache: add a Dexie store to `CURRENT_SCHEMA` in [POS/src/utils/offline/db.js](POS/src/utils/offline/db.js) (auto-versioned), then add a `cacheXFromServer` + `getCachedX` pair to [POS/src/utils/offline/cache.js](POS/src/utils/offline/cache.js) and re-export from [POS/src/utils/offline/index.js](POS/src/utils/offline/index.js). Seed it from `posSync.preloadDataForOffline`.
 - New offline write queue: follow the `customerQueue.js` pattern — write a placeholder/optimistic row + a queue row inside one transaction, drain via a `syncX` function gated by `isOffline()`, replay through an idempotent backend method keyed on `offline_id`, drop the disk mirror via `removeMirroredX` on success.
-- New frontend test: drop a `*.test.js` under [POS/tests/](POS/tests/). [POS/tests/setup.js](POS/tests/setup.js) installs `fake-indexeddb` globally so Dexie works under jsdom; mock `@/utils/apiWrapper` for any code that calls the server.
+- New frontend test: drop a `*.test.js` under [POS/tests/](POS/tests/). [POS/tests/setup.js](POS/tests/setup.js) installs `fake-indexeddb` globally so Dexie works under jsdom; mock `@/utils/apiWrapper` for any code that calls the server. The Tauri JS plugins are stubbed at `POS/tests/stubs/tauri-*.js` (registered as Vite aliases in [POS/vitest.config.js](POS/vitest.config.js)) so `runtimeConfig.isDesktop=false` paths still import cleanly.
+- New desktop customer: copy [desktop/customers/_template.json](desktop/customers/_template.json) to `<slug>.json` (gitignored) for local dev, and add the same JSON as a `CUSTOMER_CONFIG_<SLUG_UPPER>` GitHub secret for CI. Generate a signing keypair with `tauri signer generate -w desktop/keys/<slug>.key`; commit only the public key to the `updater.pubkey` field of the customer config.
+- New code that reads cookies / `window.csrf_token` / `window.frappe.*` for control flow: gate it on `runtimeConfig.isDesktop` or read from `userData` / `session.user` / `userResource.data` instead — those work in both modes.
 
 ## Constraints worth remembering
 
 - **Dev requires `"ignore_csrf": 1`** in `site_config.json` for the Vite dev server on :8080 to reach `/api` on :8000. Production relies on `window.csrf_token` injected by `pos.html`.
-- Vite build **must** stay targeted at `../pos_next/public/pos/` with `base=/assets/pos_next/pos/` — changing either breaks asset URLs in the Jinja shell.
+- Vite **web** build must stay targeted at `../pos_next/public/pos/` with `base=/assets/pos_next/pos/` — changing either breaks asset URLs in the Jinja shell. The desktop branch (`VITE_POS_TARGET=desktop`) overrides both: output goes to `desktop/dist-frontend/` with `base: "./"`, PWA disabled, and `__FRAPPE_BASE_URL__` set to the customer's site URL.
 - ES2015 target, `chunkSizeWarningLimit` is 1500 — acceptable for this app; don't silently lower it without checking bundle impact.
-- CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) currently only verifies install on a fresh bench + runs linters; backend `run-tests` is commented out. Treat `bench run-tests` as local-only until CI is re-enabled.
+- CI: [.github/workflows/ci.yml](.github/workflows/ci.yml) verifies install on a fresh bench + runs linters (backend `run-tests` is commented out — treat `bench run-tests` as local-only). [.github/workflows/desktop-build.yml](.github/workflows/desktop-build.yml) builds the per-customer Windows installer on `windows-latest`; trigger via workflow_dispatch or by pushing a tag matching `desktop-v<version>-<slug>`.
+- **Desktop credentials never leave the bundle securely.** The site URL baked into a per-customer build is visible to anyone with the .exe. Sensitive customer-specific config (anything beyond `siteUrl` / `displayName` / `identifier`) belongs in a backend setting fetched after login, not in `desktop/customers/<slug>.json`.
 - License is **AGPL-3.0** — any distributed modifications inherit copyleft.
