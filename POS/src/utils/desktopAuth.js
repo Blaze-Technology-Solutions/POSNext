@@ -163,11 +163,34 @@ export async function clearStoredApiCredentials() {
 }
 
 /**
- * Submit a Frappe email/password login through the Tauri HTTP plugin, then
- * exchange the resulting session cookie for an API key/secret pair via
- * `frappe.core.doctype.user.user.generate_keys`. Returns the key pair
- * without persisting — the caller should call `persistApiCredentials`
- * if the login succeeds.
+ * Pull the sid value out of a Set-Cookie response header. Handles both the
+ * single-string form (older fetch APIs) and the modern getSetCookie() array.
+ */
+function extractSid(response) {
+	const candidates = []
+	if (typeof response.headers.getSetCookie === "function") {
+		candidates.push(...response.headers.getSetCookie())
+	}
+	const single = response.headers.get("set-cookie")
+	if (single) candidates.push(single)
+	for (const raw of candidates) {
+		const match = raw.match(/sid=([^;]+)/)
+		if (match) return match[1]
+	}
+	return null
+}
+
+/**
+ * Submit a Frappe email/password login through the Tauri HTTP plugin and
+ * trade it for an API key+secret pair via `generate_keys`. Returns the
+ * pair without persisting — the caller should call `persistApiCredentials`
+ * on success.
+ *
+ * Tauri's HTTP plugin doesn't share a cookie jar between requests, so we
+ * pull the `sid` out of the login response and pass it as an explicit
+ * Cookie header on the generate_keys call. Frappe's generate_keys returns
+ * both api_key and api_secret in a single response, so no third call is
+ * needed.
  *
  * @param {{ email: string, password: string }} creds
  */
@@ -189,16 +212,23 @@ export async function loginAndGenerateKeys({ email, password }) {
 		)
 	}
 
-	// Frappe's generate_keys returns { api_secret, api_key } and ROTATES the
-	// secret on every call. Save what we receive immediately — we won't see it
-	// again. The user param is required and corresponds to the now-logged-in user.
+	const sid = extractSid(loginRes)
+	if (!sid) {
+		throw new Error(
+			"Login succeeded but no sid cookie was returned. The Frappe site may be misconfigured.",
+		)
+	}
+
 	const keysRes = await tFetch(
 		apiUrl(
 			`/api/method/frappe.core.doctype.user.user.generate_keys?user=${encodeURIComponent(email)}`,
 		),
 		{
 			method: "POST",
-			headers: { Accept: "application/json" },
+			headers: {
+				Accept: "application/json",
+				Cookie: `sid=${sid}`,
+			},
 		},
 	)
 	if (!keysRes.ok) {
@@ -207,29 +237,10 @@ export async function loginAndGenerateKeys({ email, password }) {
 	}
 	const data = await keysRes.json()
 	const message = data?.message || data
+	const apiKey = message?.api_key
 	const apiSecret = message?.api_secret
-	if (!apiSecret) {
-		throw new Error("generate_keys response missing api_secret")
-	}
-
-	// generate_keys doesn't return api_key directly — we have to read it from
-	// the user record. Fetch it via the API key auth we'd normally use.
-	const userRes = await tFetch(
-		apiUrl(
-			`/api/method/frappe.client.get_value?doctype=User&fieldname=api_key&filters=${encodeURIComponent(JSON.stringify({ name: email }))}`,
-		),
-		{
-			method: "GET",
-			headers: { Accept: "application/json" },
-		},
-	)
-	if (!userRes.ok) {
-		throw new Error(`fetch api_key failed (${userRes.status})`)
-	}
-	const userData = await userRes.json()
-	const apiKey = userData?.message?.api_key
-	if (!apiKey) {
-		throw new Error("Could not read api_key from User record")
+	if (!apiKey || !apiSecret) {
+		throw new Error("generate_keys response missing api_key or api_secret")
 	}
 
 	return { apiKey, apiSecret }
