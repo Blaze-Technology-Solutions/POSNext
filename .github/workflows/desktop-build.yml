@@ -43,6 +43,11 @@ on:
         required: false
         type: boolean
         default: false
+      publish_channel:
+        description: "Sign + publish to the customer's auto-update channel (overwrites desktop-channel-<slug> release)"
+        required: false
+        type: boolean
+        default: false
   push:
     tags:
       - "desktop-v*"
@@ -80,8 +85,10 @@ jobs:
             echo "customer=${BASH_REMATCH[3]}" >> "$GITHUB_OUTPUT"
             echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
             echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "publish_channel=true" >> "$GITHUB_OUTPUT"
           else
             echo "customer=${{ github.event.inputs.customer }}" >> "$GITHUB_OUTPUT"
+            echo "publish_channel=${{ github.event.inputs.publish_channel }}" >> "$GITHUB_OUTPUT"
             echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
             echo "release=${{ github.event.inputs.release }}" >> "$GITHUB_OUTPUT"
           fi
@@ -255,3 +262,89 @@ jobs:
             Automated build for **${{ steps.params.outputs.customer }}** at version **${{ steps.config.outputs.version }}**.
 
             Download `${{ steps.artefacts.outputs.primary }}` and follow the install guide at [desktop/INSTALL.md](../blob/${{ github.sha }}/desktop/INSTALL.md).
+
+      # Auto-update channel publish: signs the installer with the customer's
+      # updater key and uploads it (plus a fresh latest.json) to a stable
+      # mutable release tagged `desktop-channel-<slug>`. Cashier installs
+      # poll that release's latest.json on a 6-hour interval.
+      #
+      # Requires:
+      #   - CUSTOMER_UPDATER_KEY_<SLUG_UPPER> secret (private signing key)
+      #   - customers/<slug>.json updater.active = true with a non-empty pubkey
+      - name: Sign installer for auto-update
+        if: steps.params.outputs.publish_channel == 'true' && env.UPDATER_KEY != ''
+        shell: bash
+        env:
+          UPDATER_KEY: ${{ secrets[steps.secret_name.outputs.key] }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets[steps.secret_name.outputs.key_pwd] }}
+          INSTALLER_PATH: ${{ steps.artefacts.outputs.dist }}/${{ steps.artefacts.outputs.primary }}
+        run: |
+          # tauri signer sign requires the private key on disk; the env var
+          # would also work but the file path is more reliable across CLI
+          # versions.
+          yarn --cwd desktop tauri signer sign \
+            -k "desktop/keys/${{ steps.params.outputs.customer }}.key" \
+            -f "$INSTALLER_PATH"
+          if [[ ! -f "$INSTALLER_PATH.sig" ]]; then
+            echo "::error::Expected signature file at $INSTALLER_PATH.sig"
+            exit 1
+          fi
+          echo "✓ Signed $INSTALLER_PATH"
+
+      - name: Write latest.json for auto-update channel
+        if: steps.params.outputs.publish_channel == 'true' && env.UPDATER_KEY != ''
+        shell: bash
+        env:
+          UPDATER_KEY: ${{ secrets[steps.secret_name.outputs.key] }}
+        run: |
+          dist="${{ steps.artefacts.outputs.dist }}"
+          installer="${{ steps.artefacts.outputs.primary }}"
+          version="${{ steps.config.outputs.version }}"
+          slug="${{ steps.params.outputs.customer }}"
+          signature=$(cat "$dist/$installer.sig")
+          # The download URL must be stable across releases — channel pattern.
+          url="https://github.com/${{ github.repository }}/releases/download/desktop-channel-${slug}/${installer// /%20}"
+          cat > "$dist/latest.json" <<JSON
+          {
+            "version": "${version}",
+            "notes": "Release ${version}",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "${signature}",
+                "url": "${url}"
+              }
+            }
+          }
+          JSON
+          cat "$dist/latest.json"
+
+      - name: Publish to auto-update channel release
+        if: steps.params.outputs.publish_channel == 'true' && env.UPDATER_KEY != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPDATER_KEY: ${{ secrets[steps.secret_name.outputs.key] }}
+        run: |
+          slug="${{ steps.params.outputs.customer }}"
+          tag="desktop-channel-${slug}"
+          dist="${{ steps.artefacts.outputs.dist }}"
+          version="${{ steps.config.outputs.version }}"
+          # Create the channel release if it doesn't exist; otherwise we'll
+          # just clobber its assets with --clobber below.
+          if ! gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --repo "${{ github.repository }}" \
+              --title "Desktop auto-update channel — ${slug}" \
+              --notes "Mutable channel release for ${slug}. Asset URLs are stable across versions; latest.json carries the current version + signature." \
+              --latest=false
+          fi
+          # Upload (or overwrite) the installer and latest.json on the channel release.
+          gh release upload "$tag" \
+            "$dist/${{ steps.artefacts.outputs.primary }}" \
+            "$dist/${{ steps.artefacts.outputs.primary }}.sig" \
+            "$dist/latest.json" \
+            --repo "${{ github.repository }}" \
+            --clobber
+          echo "✓ Published ${slug} v${version} to channel release ${tag}"
+          echo "  latest.json URL: https://github.com/${{ github.repository }}/releases/download/${tag}/latest.json"
